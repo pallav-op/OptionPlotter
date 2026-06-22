@@ -285,3 +285,135 @@ asyncio.run(sched.run())
 python -m pytest tests/ -q          # 94 tests
 python run_robustness_demo.py       # full lifecycle incl. mutation rejection
 ```
+
+---
+
+## 6. Plot statuses — what they mean and what comes next
+
+`PlotRuntime.status` is a plain string field. The table below shows every value that
+is **actually set by the code** (not just mentioned in comments) and what can follow it.
+
+| status | set by | what it means | possible next statuses |
+|---|---|---|---|
+| `"created"` | `registry.create_plot()` after validation passes; also `registry.update_plot()` after a successful code update | Plot exists and is validated but no historical replay has been run yet. No data in `output_series`. | `"backfilling"` (caller starts replay) |
+| `"backfilling"` | `runtime.replay_plot()` at the start of the loop | Replay is in progress. `output_series` and `state` were just cleared; `compute_one_tick` is filling them with historical data. | `"live"` (replay finished); `"deleted"` (caller deleted mid-replay, checked on each tick) |
+| `"live"` | `runtime.replay_plot()` at the end; also `registry.resume_plot()` | Replay done. Plot is included in `registry.active_plots()` so the scheduler processes it every second. | `"paused"` (pause_plot); `"error"` (scheduler catches a runtime exception); `"created"` (update_plot success — version bumped, state cleared, needs re-replay) |
+| `"paused"` | `registry.pause_plot()` — only transitions from `"live"` | Excluded from `active_plots()`; scheduler skips it. State and output_series are preserved. | `"live"` (resume_plot) |
+| `"error"` | `scheduler._compute_plot()` on any unhandled exception or timeout | Plot's `compute_fn` threw at runtime. Plot is quarantined — excluded from `active_plots()` and will not be re-tried. `plot.error` holds the message. | No automatic recovery. Caller must call `update_plot()` with fixed code (→ `"created"`) or `delete_plot()`. |
+| `"deleted"` | `registry.delete_plot()` | Plot removed from the registry dict. Status is set on the object before deletion for any in-flight reference. `replay_plot` checks this flag and bails early. | Terminal — the object is gone from the registry. |
+
+**Statuses listed in the spec but not set on real plots in the current code:**
+
+- `"validating"` — appears in the spec and is set on *internal dummy objects* used by the
+  robustness harness and sample-context builder, but never on a real `PlotRuntime` returned
+  to a caller. Validation happens before the runtime object is created.
+- `"recomputing"` — described in the spec as the state during a code-update replay. Not set
+  anywhere in the current code; `update_plot` reuses `"created"` for that transition.
+
+---
+
+## 7. Mid-market creation: exact state flow and edge cases
+
+### The happy path (plot created at 10:30, market open 09:30–16:00)
+
+```
+wall time    status        what happens in code
+─────────────────────────────────────────────────────────────────────────────
+10:30:00     —             registry.create_plot("p", code)
+                           └─ validate_plot_code() runs internally with dummy
+                              PlotRuntime(status="validating") for harness
+                           └─ validation passes → real PlotRuntime created
+             "created"     plot.output_series = {}, plot.state = {}
+
+10:30:00     "created"     caller: replay_plot(plot, historical_snaps_09:30_to_10:30)
+             "backfilling" └─ output_series and state cleared (were already empty)
+                           └─ _rolling_stores["p"] cleared
+                           └─ compute_one_tick() called for each of ~3600 snaps
+                              each tick: appends to output_series, updates state,
+                              pushes to rolling store
+                           ⚠ THIS TAKES ~4-6 seconds of real wall time.
+                             During this 4-6s the live feed is running and
+                             generating new snaps (10:30:00–10:30:05-ish).
+                             THOSE SNAPS ARE NOT CAPTURED. The library has no
+                             buffer for them. This is a known gap.
+
+~10:30:05    "live"        replay_plot() loop exits normally
+                           plot.output_series has 3600 (ts, value) tuples
+                           plot.state has accumulated as if running since 09:30
+                           rolling store has last 24h of output values (= all 3600)
+
+10:30:05     "live"        caller: asyncio.run(sched.run())
+                           └─ scheduler calls active_plots() → ["p"]
+                           └─ source.get_next() → current live snapshot (~10:30:05)
+                           └─ compute_one_tick() appends tick 3601 to output_series
+                           └─ gap: output_series jumps from ts=10:30:00 to ts=10:30:05
+                              (4-5 missing seconds, never computed)
+
+10:31:00–    "live"        one tick per second; output_series grows continuously
+16:00:00
+```
+
+### Market close — what the code actually does
+
+```
+wall time    status        what happens in code
+─────────────────────────────────────────────────────────────────────────────
+16:00:00     "live"        live feed stops sending new snapshots.
+                           LatestSnapshotSource._latest stays fixed at the
+                           last snapshot it received (16:00:00 data).
+
+16:00:01     "live"        scheduler wakes up, calls source.get_next()
+                           → returns the same 16:00:00 snapshot (not None)
+                           → compute_one_tick() runs again on stale data
+                           → appends another (16:00:00_ms, value) to output_series
+                           ⚠ DUPLICATE TIMESTAMPS. The same snapshot timestamp
+                             is emitted every second after close.
+                           ⚠ The scheduler loop NEVER terminates on its own —
+                             LatestSnapshotSource never returns None after first set.
+                             run() keeps going until stop() is called or process exits.
+
+after 16:00  "live"        Nothing changes status. No automatic "market_closed" state.
+                           The process must be externally stopped (sched.stop() or
+                           process shutdown).
+```
+
+### Process restart next day — what the code actually does
+
+```
+wall time    status        what happens in code
+─────────────────────────────────────────────────────────────────────────────
+next morning  —            Process restarts. Python imports plot_compute fresh.
+
+                           PlotRegistry.__init__() → self._plots = {}  (empty dict)
+                           _rolling_stores = {}  (module-level, empty)
+
+                           ALL of the following are gone:
+                             • Every PlotRuntime object (plot_id, version, code)
+                             • Every output_series (yesterday's computed history)
+                             • Every plot.state (running sums, accumulators)
+                             • Every rolling store (window history)
+
+                           The library remembers NOTHING. There is no persistence.
+                           The only durable data is whatever the caller stored
+                           externally (e.g. the code string in a database).
+
+09:30:00      —            Caller must:
+                             1. Re-call create_plot(plot_id, code) for every plot
+                                → re-runs the full 6-stage validation (again)
+                                → status = "created"
+                             2. Re-call replay_plot(plot, today's_snaps_from_09:30)
+                                → status = "backfilling" → "live"
+                             3. Restart scheduler.run()
+```
+
+### What is and isn't preserved across the replay→live boundary
+
+| Thing | Preserved? | Where |
+|---|---|---|
+| `output_series` (all computed points) | ✅ Yes — live ticks append to the same list | `PlotRuntime.output_series` |
+| `plot.state` (ctx.state dict) | ✅ Yes — same dict object, never cleared between replay and live | `PlotRuntime.state` |
+| Rolling window data | ✅ Yes — `_rolling_stores["p"]` is warm from replay; first live tick has full window history | module-level `_rolling_stores` dict in runtime.py |
+| `plot.version` | ✅ Yes — unchanged | `PlotRuntime.version` |
+| Data gap during replay (~4-6s) | ❌ No — snapshots arriving during replay are not captured | Not implemented |
+| Data after market close | ❌ No — scheduler keeps ticking stale data indefinitely | Not implemented |
+| Anything after process restart | ❌ No — no persistence layer | Not implemented |
