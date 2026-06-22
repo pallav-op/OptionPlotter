@@ -35,26 +35,20 @@ class ChainView:
         return float(np.nansum(arr[mask]))
 
     def mean(self, field: str, **filters) -> float:
-        arr = self._resolve_field(field)
-        mask = self._build_mask(**filters)
-        sliced = arr[mask]
-        if sliced.size == 0:
+        sliced = self._resolve_field(field)[self._build_mask(**filters)]
+        if sliced.size == 0 or np.all(np.isnan(sliced)):
             return float("nan")
         return float(np.nanmean(sliced))
 
     def min(self, field: str, **filters) -> float:
-        arr = self._resolve_field(field)
-        mask = self._build_mask(**filters)
-        sliced = arr[mask]
-        if sliced.size == 0:
+        sliced = self._resolve_field(field)[self._build_mask(**filters)]
+        if sliced.size == 0 or np.all(np.isnan(sliced)):
             return float("nan")
         return float(np.nanmin(sliced))
 
     def max(self, field: str, **filters) -> float:
-        arr = self._resolve_field(field)
-        mask = self._build_mask(**filters)
-        sliced = arr[mask]
-        if sliced.size == 0:
+        sliced = self._resolve_field(field)[self._build_mask(**filters)]
+        if sliced.size == 0 or np.all(np.isnan(sliced)):
             return float("nan")
         return float(np.nanmax(sliced))
 

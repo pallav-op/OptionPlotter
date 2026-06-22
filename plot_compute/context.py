@@ -32,6 +32,18 @@ class WindowAPI:
     def last(self, series: str) -> float:
         return self._store.last(series)
 
+    def std(self, series: str, window: str) -> float:
+        return self._store.std(series, window)
+
+    def zscore(self, series: str, window: str) -> float:
+        return self._store.zscore(series, window)
+
+    def ema(self, series: str, window: str, span: int | None = None) -> float:
+        return self._store.ema(series, window, span=span)
+
+    def correlation(self, series_a: str, series_b: str, window: str) -> float:
+        return self._store.correlation(series_a, series_b, window)
+
 
 @dataclass
 class IndicatorContext:

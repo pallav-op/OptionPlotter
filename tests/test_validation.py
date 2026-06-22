@@ -116,8 +116,9 @@ def compute(ctx):
     put_qty = ctx.chain.sum(option_type="PUT", field="bid_quantity_l1")
     return {"value": safe_div(call_qty - put_qty, call_qty + put_qty)}
 """
-    fn = validate_plot_code(code)
+    fn, report = validate_plot_code(code)
     assert callable(fn)
+    assert report.ok()  # this robust example must survive the whole battery
 
 
 def test_valid_multi_series():
@@ -130,7 +131,7 @@ def compute(ctx):
         }
     }
 """
-    fn = validate_plot_code(code)
+    fn, _ = validate_plot_code(code)
     assert callable(fn)
 
 
@@ -141,5 +142,5 @@ def compute(ctx):
     ctx.state["cum"] = ctx.state.get("cum", 0.0) + current
     return {"value": ctx.state["cum"]}
 """
-    fn = validate_plot_code(code)
+    fn, _ = validate_plot_code(code)
     assert callable(fn)

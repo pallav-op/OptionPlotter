@@ -13,7 +13,7 @@ from plot_compute.models import PlotRuntime
 
 
 def _make_plot(code: str, plot_id: str = "p1") -> PlotRuntime:
-    fn = validate_plot_code(code)
+    fn, _ = validate_plot_code(code)
     return PlotRuntime(
         plot_id=plot_id,
         version=1,
@@ -66,17 +66,12 @@ def compute(ctx):
 
 
 def test_compute_one_tick_raises_on_user_error():
-    code = """
-def compute(ctx):
-    raise ValueError("intentional error")
-"""
-    fn = validate_plot_code.__wrapped__ if hasattr(validate_plot_code, "__wrapped__") else None
-
-    # bypass validation for this test
+    # A compute that raises at runtime must surface as RuntimePlotError.
+    # Construct the plot directly to bypass validation (validation would reject it).
     plot = PlotRuntime(
         plot_id="err_plot",
         version=1,
-        code=code,
+        code="def compute(ctx): return 1 / 0",
         compute_fn=lambda ctx: 1 / 0,
         status="live",
     )

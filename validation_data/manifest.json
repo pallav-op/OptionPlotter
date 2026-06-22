@@ -1,0 +1,255 @@
+{
+  "n_cases": 33,
+  "ticks_per_case": 3,
+  "invariants": [
+    {
+      "kind": "exception",
+      "rule": "compute(ctx) must not raise on any market-data shape."
+    },
+    {
+      "kind": "mutated_input",
+      "rule": "compute(ctx) must not modify the input snapshot in place \u2014 the same ChainSnapshot is shared across all plots in a live tick, so mutating it corrupts every other plot and breaks replay determinism."
+    },
+    {
+      "kind": "bad_format",
+      "rule": "the return must be {'value': number} or {'series': {name: number, ...}}."
+    },
+    {
+      "kind": "non_finite",
+      "rule": "every returned number must be finite (no NaN / inf)."
+    }
+  ],
+  "cases": [
+    {
+      "name": "empty_chain",
+      "category": "structural",
+      "description": "Zero options in the chain. count()==0 \u2192 any division by a count/sum blows up.",
+      "n_options": 0,
+      "n_levels": 3
+    },
+    {
+      "name": "single_call_only",
+      "category": "structural",
+      "description": "Exactly one CALL, no PUTs. Put-side aggregations are empty.",
+      "n_options": 1,
+      "n_levels": 3
+    },
+    {
+      "name": "single_put_only",
+      "category": "structural",
+      "description": "Exactly one PUT, no CALLs. Call-side aggregations are empty.",
+      "n_options": 1,
+      "n_levels": 3
+    },
+    {
+      "name": "calls_only",
+      "category": "structural",
+      "description": "Several CALLs, zero PUTs. put_qty==0 \u2192 call/put ratios divide by zero.",
+      "n_options": 6,
+      "n_levels": 3
+    },
+    {
+      "name": "puts_only",
+      "category": "structural",
+      "description": "Several PUTs, zero CALLs. call_qty==0 \u2192 put/call ratios divide by zero.",
+      "n_options": 6,
+      "n_levels": 3
+    },
+    {
+      "name": "single_book_level",
+      "category": "structural",
+      "description": "Only L1 exists. Accessing bid_price_l2 / _l3 hits missing levels.",
+      "n_options": 8,
+      "n_levels": 1
+    },
+    {
+      "name": "no_book_levels",
+      "category": "structural",
+      "description": "Book has zero levels per side. Every _l1 access is out of range.",
+      "n_options": 8,
+      "n_levels": 0
+    },
+    {
+      "name": "large_dense_chain",
+      "category": "structural",
+      "description": "100 options (50C/50P), 3 levels. Stresses per-tick cost and accumulation.",
+      "n_options": 100,
+      "n_levels": 3
+    },
+    {
+      "name": "all_nan_book_prices",
+      "category": "nan",
+      "description": "Every bid/ask price is NaN. mean(bid_price_l1) \u2192 NaN unless guarded.",
+      "n_options": 8,
+      "n_levels": 3
+    },
+    {
+      "name": "all_nan_greeks",
+      "category": "nan",
+      "description": "delta/gamma/vega/theta/iv all NaN (greek-engine outage).",
+      "n_options": 8,
+      "n_levels": 3
+    },
+    {
+      "name": "all_nan_iv",
+      "category": "nan",
+      "description": "Every IV is NaN. mean(iv) \u2192 NaN; IV-based indicators must use nz()/safe defaults.",
+      "n_options": 8,
+      "n_levels": 3
+    },
+    {
+      "name": "some_nan_iv",
+      "category": "nan",
+      "description": "Half the IVs are NaN (partial outage). Mixed NaN/finite aggregation.",
+      "n_options": 8,
+      "n_levels": 3
+    },
+    {
+      "name": "nan_underlying",
+      "category": "nan",
+      "description": "underlying_price is NaN. Any moneyness/ratio vs underlying \u2192 NaN.",
+      "n_options": 8,
+      "n_levels": 3
+    },
+    {
+      "name": "all_nan_quantities",
+      "category": "nan",
+      "description": "Every bid/ask quantity is NaN. nansum\u21920 but ratios of NaN qty can surprise.",
+      "n_options": 8,
+      "n_levels": 3
+    },
+    {
+      "name": "all_zero_quantities",
+      "category": "zero",
+      "description": "All bid/ask quantities are 0. sum==0 \u2192 imbalance ratios divide by zero.",
+      "n_options": 8,
+      "n_levels": 3
+    },
+    {
+      "name": "all_zero_prices",
+      "category": "zero",
+      "description": "All prices are 0. Division by price and log(price) blow up.",
+      "n_options": 8,
+      "n_levels": 3
+    },
+    {
+      "name": "zero_volume",
+      "category": "zero",
+      "description": "volume_since_day_start and traded value are 0. VWAP-style divide by volume.",
+      "n_options": 8,
+      "n_levels": 3
+    },
+    {
+      "name": "zero_underlying",
+      "category": "zero",
+      "description": "underlying_price is 0. K/S and log(K/S) blow up.",
+      "n_options": 8,
+      "n_levels": 3
+    },
+    {
+      "name": "all_zero_everything",
+      "category": "zero",
+      "description": "Maximum divide-by-zero exposure: prices, quantities, greeks, volume all 0.",
+      "n_options": 8,
+      "n_levels": 3
+    },
+    {
+      "name": "flat_strikes",
+      "category": "flat",
+      "description": "All strikes identical. Strike-spread / skew-vs-strike calcs degenerate.",
+      "n_options": 8,
+      "n_levels": 3
+    },
+    {
+      "name": "flat_prices",
+      "category": "flat",
+      "description": "All mid/bid/ask prices identical. spread==0, range==0 \u2192 range-normalisation /0.",
+      "n_options": 8,
+      "n_levels": 3
+    },
+    {
+      "name": "flat_delta",
+      "category": "flat",
+      "description": "All deltas identical. std(delta)==0 \u2192 zscore divides by zero std.",
+      "n_options": 8,
+      "n_levels": 3
+    },
+    {
+      "name": "identical_options",
+      "category": "flat",
+      "description": "Every row identical (zero cross-sectional variance everywhere).",
+      "n_options": 8,
+      "n_levels": 3
+    },
+    {
+      "name": "extreme_large_values",
+      "category": "extreme",
+      "description": "Huge prices/quantities (1e15+). Products can overflow to inf.",
+      "n_options": 8,
+      "n_levels": 3
+    },
+    {
+      "name": "extreme_small_values",
+      "category": "extreme",
+      "description": "Tiny values (1e-15). Divide-by-near-zero produces huge/inf results.",
+      "n_options": 8,
+      "n_levels": 3
+    },
+    {
+      "name": "negative_prices",
+      "category": "extreme",
+      "description": "Negative bid/ask/mid prices (bad feed). log()/sqrt() \u2192 domain errors / NaN.",
+      "n_options": 8,
+      "n_levels": 3
+    },
+    {
+      "name": "negative_greeks_extreme",
+      "category": "extreme",
+      "description": "Out-of-range greeks (delta=-5, gamma=-3). Sign/range assumptions break.",
+      "n_options": 8,
+      "n_levels": 3
+    },
+    {
+      "name": "inf_prices",
+      "category": "extreme",
+      "description": "+inf bid/ask prices. inf propagates through any arithmetic.",
+      "n_options": 8,
+      "n_levels": 3
+    },
+    {
+      "name": "neg_inf_prices",
+      "category": "extreme",
+      "description": "-inf bid prices. -inf propagates; min()/comparisons surprise.",
+      "n_options": 8,
+      "n_levels": 3
+    },
+    {
+      "name": "all_no_quote",
+      "category": "quote",
+      "description": "has_quote is False everywhere. Filtering has_quote=True yields an empty set.",
+      "n_options": 8,
+      "n_levels": 3
+    },
+    {
+      "name": "mixed_quote",
+      "category": "quote",
+      "description": "has_quote alternates. has_quote=True selects a sparse subset.",
+      "n_options": 8,
+      "n_levels": 3
+    },
+    {
+      "name": "normal_realistic",
+      "category": "normal",
+      "description": "Healthy 4C/4P chain with 3 book levels. Sanity baseline \u2014 should always pass.",
+      "n_options": 8,
+      "n_levels": 3
+    },
+    {
+      "name": "normal_two_expiries",
+      "category": "normal",
+      "description": "Healthy chain spanning two expiries. Baseline for expiry-filtered indicators.",
+      "n_options": 8,
+      "n_levels": 3
+    }
+  ]
+}

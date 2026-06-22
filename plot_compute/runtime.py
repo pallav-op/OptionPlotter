@@ -5,8 +5,8 @@ from typing import Callable, Iterable
 from .context import build_context
 from .errors import RuntimePlotError
 from .models import ChainSnapshot, PlotResult, PlotRuntime
+from .result_format import validate_result
 from .rolling import RollingWindowStore
-from .validation import validate_result
 
 # Per-plot rolling stores — keyed by plot_id
 _rolling_stores: dict[str, RollingWindowStore] = {}

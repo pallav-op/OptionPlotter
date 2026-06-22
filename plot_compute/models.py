@@ -56,6 +56,7 @@ class PlotRuntime:
     output_series: dict[str, list[tuple[int, float]]] = field(default_factory=dict)
     last_computed_ts: int | None = None
     error: str | None = None
+    robustness_report: Any = None   # RobustnessReport from the last validation (if any)
 
 
 @dataclass

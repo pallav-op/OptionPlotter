@@ -42,30 +42,40 @@ def build_chain_snapshot(proto_msg) -> ChainSnapshot:
         )
         max_levels = max(max_levels, 1)
 
-    # Scalar arrays
-    option_type = np.empty(n, dtype=object)
-    strike_px = np.zeros(n, dtype=np.float64)
-    expiry_timestamp = np.zeros(n, dtype=np.uint64)
-    mid_px = np.zeros(n, dtype=np.float64)
-    last_traded_price = np.zeros(n, dtype=np.float64)
-    total_traded_quantity = np.zeros(n, dtype=np.int64)
-    total_traded_value = np.zeros(n, dtype=np.float64)
-    volume_since_day_start = np.zeros(n, dtype=np.int64)
-    moneyness = np.zeros(n, dtype=np.int32)
-    has_quote = np.zeros(n, dtype=bool)
-    low_since_day_start = np.zeros(n, dtype=np.float64)
-    high_since_day_start = np.zeros(n, dtype=np.float64)
-    book_levels_per_side = np.zeros(n, dtype=np.uint32)
-    underlying_price = np.zeros(n, dtype=np.float64)
-    tte = np.zeros(n, dtype=np.float64)
-    delta = np.zeros(n, dtype=np.float64)
-    gamma = np.zeros(n, dtype=np.float64)
-    vega = np.zeros(n, dtype=np.float64)
-    theta = np.zeros(n, dtype=np.float64)
-    iv = np.zeros(n, dtype=np.float64)
-    rate_of_interest = np.zeros(n, dtype=np.float64)
+    # Split the (option, type) pairs once; build each column in a single pass.
+    opts = [opt for opt, _ in options]
+    otypes = [otype for _, otype in options]
 
-    # 2-D book arrays
+    def _col(field, default, dtype):
+        # np.fromiter builds the column directly from the generator — faster and
+        # cleaner than n individual indexed assignments into a pre-allocated array.
+        return np.fromiter(
+            (_get(o, field, default) for o in opts), dtype=dtype, count=n
+        )
+
+    option_type = np.array(otypes, dtype=object)
+    strike_px = _col("strike_px", 0.0, np.float64)
+    expiry_timestamp = _col("expiry_timestamp", 0, np.uint64)
+    mid_px = _col("mid_px", 0.0, np.float64)
+    last_traded_price = _col("last_traded_price", 0.0, np.float64)
+    total_traded_quantity = _col("total_traded_quantity", 0, np.int64)
+    total_traded_value = _col("total_traded_value", 0.0, np.float64)
+    volume_since_day_start = _col("volume_since_day_start", 0, np.int64)
+    moneyness = _col("moneyness", 0, np.int32)
+    has_quote = _col("has_quote", False, bool)
+    low_since_day_start = _col("low_since_day_start", 0.0, np.float64)
+    high_since_day_start = _col("high_since_day_start", 0.0, np.float64)
+    book_levels_per_side = _col("book_levels_per_side", 0, np.uint32)
+    underlying_price = _col("underlying_price", 0.0, np.float64)
+    tte = _col("tte", 0.0, np.float64)
+    delta = _col("delta", 0.0, np.float64)
+    gamma = _col("gamma", 0.0, np.float64)
+    vega = _col("vega", 0.0, np.float64)
+    theta = _col("theta", 0.0, np.float64)
+    iv = _col("iv", 0.0, np.float64)
+    rate_of_interest = _col("rate_of_interest", 0.0, np.float64)
+
+    # 2-D book arrays — ragged per-option depth, filled with an indexed loop.
     bid_price = np.full((n, max_levels), np.nan, dtype=np.float64)
     bid_quantity = np.zeros((n, max_levels), dtype=np.int64)
     bid_order_count = np.zeros((n, max_levels), dtype=np.int64)
@@ -73,29 +83,7 @@ def build_chain_snapshot(proto_msg) -> ChainSnapshot:
     ask_quantity = np.zeros((n, max_levels), dtype=np.int64)
     ask_order_count = np.zeros((n, max_levels), dtype=np.int64)
 
-    for i, (opt, otype) in enumerate(options):
-        option_type[i] = otype
-        strike_px[i] = float(_get(opt, "strike_px", 0.0))
-        expiry_timestamp[i] = int(_get(opt, "expiry_timestamp", 0))
-        mid_px[i] = float(_get(opt, "mid_px", 0.0))
-        last_traded_price[i] = float(_get(opt, "last_traded_price", 0.0))
-        total_traded_quantity[i] = int(_get(opt, "total_traded_quantity", 0))
-        total_traded_value[i] = float(_get(opt, "total_traded_value", 0.0))
-        volume_since_day_start[i] = int(_get(opt, "volume_since_day_start", 0))
-        moneyness[i] = int(_get(opt, "moneyness", 0))
-        has_quote[i] = bool(_get(opt, "has_quote", False))
-        low_since_day_start[i] = float(_get(opt, "low_since_day_start", 0.0))
-        high_since_day_start[i] = float(_get(opt, "high_since_day_start", 0.0))
-        book_levels_per_side[i] = int(_get(opt, "book_levels_per_side", 0))
-        underlying_price[i] = float(_get(opt, "underlying_price", 0.0))
-        tte[i] = float(_get(opt, "tte", 0.0))
-        delta[i] = float(_get(opt, "delta", 0.0))
-        gamma[i] = float(_get(opt, "gamma", 0.0))
-        vega[i] = float(_get(opt, "vega", 0.0))
-        theta[i] = float(_get(opt, "theta", 0.0))
-        iv[i] = float(_get(opt, "iv", 0.0))
-        rate_of_interest[i] = float(_get(opt, "rate_of_interest", 0.0))
-
+    for i, opt in enumerate(opts):
         for j, bid in enumerate(_get_list(opt, "bids")):
             if j >= max_levels:
                 break

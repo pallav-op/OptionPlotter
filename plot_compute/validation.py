@@ -2,18 +2,16 @@ from __future__ import annotations
 
 import ast
 import inspect
-import math
 import time
-import types
 import warnings
 from typing import Callable
 
-import numpy as np
-
-from .context import IndicatorContext, WindowAPI, build_context
+from .context import IndicatorContext, build_context
 from .errors import ValidationError
-from .executor import SAFE_BUILTINS, build_user_namespace, compile_user_code
+from .executor import build_user_namespace, compile_user_code
 from .models import ChainSnapshot, PlotRuntime
+from .result_format import validate_result  # re-exported for backwards compatibility
+from .robustness import RobustnessReport, run_robustness_suite
 from .rolling import RollingWindowStore
 
 # ---------------------------------------------------------------------------
@@ -188,66 +186,30 @@ def build_sample_context() -> IndicatorContext:
 
 
 # ---------------------------------------------------------------------------
-# Stage 4 — Smoke test
+# Stage 4 — Robustness (adversarial edge-case battery)
 # ---------------------------------------------------------------------------
 
-def run_smoke_test(compute_fn: Callable) -> None:
-    ctx = build_sample_context()
-    try:
-        result = compute_fn(ctx)
-    except Exception as exc:
-        raise ValidationError("smoke", f"compute raised an exception on sample data: {exc}") from exc
-    validate_result(result)
+def run_robustness_validation(
+    compute_fn: Callable,
+    *,
+    strict: bool = True,
+    repeat: int = 3,
+) -> RobustnessReport:
+    """Run the adversarial edge-case battery (NaN / zero / flat / extreme / …).
 
-
-# ---------------------------------------------------------------------------
-# Stage 5 — Return format validation
-# ---------------------------------------------------------------------------
-
-def validate_result(result) -> dict[str, float]:
-    """Validate and normalise compute return value to {series_name: float}.
-
-    Returns the normalised dict on success; raises ValidationError on failure.
+    Returns the :class:`RobustnessReport`. If ``strict`` and any case fails, raises
+    ``ValidationError("robustness", <formatted report>)`` so the plot is rejected
+    with a full pass/fail breakdown attached.
     """
-    if result is None:
-        raise ValidationError("result_format", "compute returned None.")
-    if not isinstance(result, dict):
-        raise ValidationError("result_format", f"compute must return a dict, got {type(result).__name__}.")
-
-    if "value" in result:
-        val = result["value"]
-        _assert_finite(val, "value")
-        return {"value": float(val)}
-
-    if "series" in result:
-        series = result["series"]
-        if not isinstance(series, dict):
-            raise ValidationError("result_format", "'series' must be a dict.")
-        if not series:
-            raise ValidationError("result_format", "'series' dict must not be empty.")
-        out = {}
-        for name, val in series.items():
-            _assert_finite(val, f"series[{name!r}]")
-            out[name] = float(val)
-        return out
-
-    raise ValidationError(
-        "result_format",
-        "Return dict must contain either 'value' or 'series' key.",
-    )
+    report = run_robustness_suite(compute_fn, repeat=repeat)
+    if strict and not report.ok():
+        raise ValidationError("robustness", report.format(show_passes=False))
+    return report
 
 
-def _assert_finite(val, label: str) -> None:
-    if val is None:
-        raise ValidationError("result_format", f"{label} is None.")
-    try:
-        fval = float(val)
-    except (TypeError, ValueError):
-        raise ValidationError("result_format", f"{label} is not a number: {val!r}.")
-    if math.isnan(fval) or math.isinf(fval):
-        raise ValidationError("result_format", f"{label} must be a finite number, got {fval}.")
-
-
+# ---------------------------------------------------------------------------
+# Stage 5 — Return format validation lives in result_format.validate_result
+#           (imported above and re-exported here for backwards compatibility)
 # ---------------------------------------------------------------------------
 # Stage 6 — Performance smoke test
 # ---------------------------------------------------------------------------
@@ -287,11 +249,25 @@ def run_performance_test(compute_fn: Callable) -> None:
 # Master entry point
 # ---------------------------------------------------------------------------
 
-def validate_plot_code(code: str) -> Callable:
-    """Run all 6 validation stages. Returns the compiled compute callable on success."""
+def validate_plot_code(
+    code: str,
+    *,
+    strict_robustness: bool = True,
+    robustness_repeat: int = 3,
+) -> tuple[Callable, RobustnessReport]:
+    """Run all 6 validation stages before a plot is accepted.
+
+    Stages: syntax → safety → contract → robustness → (result_format, applied
+    per-tick inside robustness) → performance.
+
+    Returns ``(compute_fn, robustness_report)`` on success. Raises ``ValidationError``
+    (with ``.stage`` set) if any stage fails. When ``strict_robustness`` is True
+    (the default) a plot is rejected if any adversarial case fails; set it False to
+    downgrade robustness failures to an inspectable report without blocking.
+    """
     validate_syntax(code)
     validate_ast_safety(code)
     compute_fn = validate_compute_signature(code)
-    run_smoke_test(compute_fn)
+    report = run_robustness_validation(compute_fn, strict=strict_robustness, repeat=robustness_repeat)
     run_performance_test(compute_fn)
-    return compute_fn
+    return compute_fn, report

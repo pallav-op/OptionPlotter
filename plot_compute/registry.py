@@ -15,27 +15,46 @@ class PlotRegistry:
     # CRUD
     # ------------------------------------------------------------------
 
-    def create_plot(self, plot_id: str, code: str) -> PlotRuntime:
+    def create_plot(
+        self,
+        plot_id: str,
+        code: str,
+        *,
+        strict_robustness: bool = True,
+    ) -> PlotRuntime:
         """Validate code and create a new PlotRuntime.
 
+        Runs the full pre-registration validation pipeline (syntax → safety →
+        contract → robustness → result_format → performance). The resulting
+        robustness report is attached to ``plot.robustness_report`` so callers can
+        inspect which adversarial cases passed/failed even on success.
+
         The caller is responsible for driving historical replay after creation.
-        Raises ValidationError if any validation stage fails.
+        Raises ValidationError if any stage fails. With ``strict_robustness=True``
+        (default), any failing adversarial case rejects the plot.
         """
         if plot_id in self._plots:
             raise ValueError(f"Plot {plot_id!r} already exists. Use update_plot to modify it.")
 
-        compute_fn = validate_plot_code(code)
+        compute_fn, report = validate_plot_code(code, strict_robustness=strict_robustness)
         plot = PlotRuntime(
             plot_id=plot_id,
             version=1,
             code=code,
             compute_fn=compute_fn,
             status="created",
+            robustness_report=report,
         )
         self._plots[plot_id] = plot
         return plot
 
-    def update_plot(self, plot_id: str, code: str) -> PlotRuntime:
+    def update_plot(
+        self,
+        plot_id: str,
+        code: str,
+        *,
+        strict_robustness: bool = True,
+    ) -> PlotRuntime:
         """Update the compute code of an existing plot.
 
         If validation fails the old version continues running and ValidationError is raised.
@@ -43,12 +62,13 @@ class PlotRegistry:
         """
         plot = self._get_existing(plot_id)
 
-        compute_fn = validate_plot_code(code)  # raises ValidationError on failure
+        compute_fn, report = validate_plot_code(code, strict_robustness=strict_robustness)
 
         # Validation passed — update in place
         plot.version += 1
         plot.code = code
         plot.compute_fn = compute_fn
+        plot.robustness_report = report
         plot.state.clear()
         plot.output_series.clear()
         plot.last_computed_ts = None
